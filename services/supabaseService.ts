@@ -17,6 +17,9 @@ export const saveSettings = (settings: AppSettings) => {
 // --- SQL Generator ---
 export const generateSQL = () => {
   return `
+-- Enable UUID extension (Required for uuid_generate_v4)
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 -- Create Employees Table
 CREATE TABLE IF NOT EXISTS employees (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -54,19 +57,24 @@ CREATE TABLE IF NOT EXISTS scan_logs (
 );
 
 -- Indexes for performance
-CREATE INDEX idx_vehicle_plate ON vehicles(license_plate);
-CREATE INDEX idx_logs_timestamp ON scan_logs(timestamp);
-CREATE INDEX idx_logs_employee ON scan_logs(employee_id);
-CREATE INDEX idx_logs_vehicle ON scan_logs(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_plate ON vehicles(license_plate);
+CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON scan_logs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_logs_employee ON scan_logs(employee_id);
+CREATE INDEX IF NOT EXISTS idx_logs_vehicle ON scan_logs(vehicle_id);
   `;
 };
 
 export const testConnection = async (): Promise<boolean> => {
   try {
-    const { error } = await supabase.from('employees').select('count', { count: 'exact', head: true });
-    return !error;
+    // Check if employees table exists by selecting 0 rows
+    const { error } = await supabase.from('employees').select('*', { count: 'exact', head: true });
+    if (error) {
+      console.error("Database connection failed:", error.message);
+      return false;
+    }
+    return true;
   } catch (e) {
-    console.error(e);
+    console.error("Unexpected error testing connection:", e);
     return false;
   }
 };
@@ -76,7 +84,7 @@ export const testConnection = async (): Promise<boolean> => {
 export const getEmployees = async (): Promise<Employee[]> => {
   const { data, error } = await supabase.from('employees').select('*').order('first_name');
   if (error) {
-    console.error("Error fetching employees:", error);
+    console.error("Error fetching employees:", error.message);
     return [];
   }
   return data as Employee[];
@@ -89,7 +97,7 @@ export const getVehicles = async (): Promise<(Vehicle & { employee?: Employee })
     .order('created_at', { ascending: false });
   
   if (error) {
-    console.error("Error fetching vehicles:", error);
+    console.error("Error fetching vehicles:", error.message);
     return [];
   }
   return data as any;
@@ -101,27 +109,42 @@ export const getVehiclesByEmployee = async (employeeId: string): Promise<Vehicle
     .select('*')
     .eq('employee_id', employeeId);
     
-    if (error) return [];
+    if (error) {
+        console.error("Error fetching vehicles by employee:", error.message);
+        return [];
+    }
     return data as Vehicle[];
 }
 
-// Fixed Search Logic: Handles spaces intelligently
+// Improved Fuzzy Search Logic
 export const searchVehicleByPlate = async (plate: string): Promise<{ vehicle: Vehicle, employee: Employee } | null> => {
   // 1. Clean the input (remove spaces, dashes)
   const cleanInput = plate.replace(/[\s-]/g, '');
 
-  // 2. Fetch all vehicles (For a small app this is fine, for large scale use RPC or Text Search)
-  // We fetch all because we need to clean the DB values to compare accurately if they aren't normalized in DB.
+  if (!cleanInput) return null;
+
+  // 2. Fetch all vehicles to perform robust matching in-memory
   const { data, error } = await supabase
     .from('vehicles')
     .select('*, employee:employees(*)');
 
-  if (error || !data) return null;
+  if (error || !data) {
+      console.error("Error searching vehicle:", error?.message);
+      return null;
+  }
 
-  // 3. Find match in JS
+  // 3. Find match with fuzzy logic
   const match = data.find((v: any) => {
+      // Clean DB plate
       const dbPlate = v.license_plate.replace(/[\s-]/g, '');
-      return dbPlate === cleanInput;
+      
+      // A. Exact Match
+      if (dbPlate === cleanInput) return true;
+      
+      // B. Input Contains DB Plate (e.g., input "5กฉ191กรุงเทพ", db "5กฉ191")
+      if (cleanInput.includes(dbPlate) && dbPlate.length > 3) return true;
+      
+      return false;
   });
 
   if (match) {
@@ -135,7 +158,9 @@ export const searchVehicleByPlate = async (plate: string): Promise<{ vehicle: Ve
 };
 
 export const createEmployee = async (employee: Omit<Employee, 'id' | 'created_at'>) => {
-  return await supabase.from('employees').insert(employee).select();
+  const { data, error } = await supabase.from('employees').insert(employee).select();
+  if (error) console.error("Error creating employee:", error.message);
+  return { data, error };
 };
 
 export const createVehicle = async (vehicle: Omit<Vehicle, 'id' | 'created_at'>) => {
@@ -144,11 +169,15 @@ export const createVehicle = async (vehicle: Omit<Vehicle, 'id' | 'created_at'>)
       ...vehicle,
       license_plate: vehicle.license_plate.replace(/\s/g, '')
   };
-  return await supabase.from('vehicles').insert(cleanVehicle).select();
+  const { data, error } = await supabase.from('vehicles').insert(cleanVehicle).select();
+  if (error) console.error("Error creating vehicle:", error.message);
+  return { data, error };
 };
 
 export const saveScanLog = async (log: Omit<ScanLog, 'id'>) => {
-  return await supabase.from('scan_logs').insert(log);
+  const { data, error } = await supabase.from('scan_logs').insert(log);
+  if (error) console.error("Error saving log:", error.message);
+  return { data, error };
 };
 
 export const getLogsByDateRange = async (startDate: string, endDate: string) => {
@@ -159,11 +188,13 @@ export const getLogsByDateRange = async (startDate: string, endDate: string) => 
     .lte('timestamp', endDate)
     .order('timestamp', { ascending: false });
     
-    if (error) return [];
+    if (error) {
+        console.error("Error fetching logs:", error.message);
+        return [];
+    }
     return data;
 };
 
-// New: Get Scan History for a specific Vehicle
 export const getVehicleScanHistory = async (vehicleId: string) => {
     const { data, error } = await supabase
         .from('scan_logs')
@@ -171,27 +202,37 @@ export const getVehicleScanHistory = async (vehicleId: string) => {
         .eq('vehicle_id', vehicleId)
         .order('timestamp', { ascending: false });
     
-    if (error) return [];
+    if (error) {
+        console.error("Error fetching history:", error.message);
+        return [];
+    }
     return data as ScanLog[];
 };
 
-// New: Get Employee Scan Stats
 export const getEmployeeScanStats = async () => {
     const { data, error } = await supabase
         .from('scan_logs')
         .select('employee_id, vehicle_type');
     
-    if (error) return {};
+    if (error) {
+        // If table doesn't exist yet, just return empty stats rather than crashing
+        console.warn("Could not fetch stats (Scan logs table might be empty or missing):", error.message);
+        return {};
+    }
     
-    // Aggregation
     const stats: Record<string, { car: number, motorcycle: number, win: number }> = {};
     
     data.forEach((log: any) => {
+        if (!log.employee_id) return;
+        
         if (!stats[log.employee_id]) {
             stats[log.employee_id] = { car: 0, motorcycle: 0, win: 0 };
         }
-        if (log.vehicle_type === 'car') stats[log.employee_id].car++;
-        else if (log.vehicle_type === 'motorcycle') stats[log.employee_id].motorcycle++;
+        
+        const type = log.vehicle_type?.toLowerCase();
+        
+        if (type === 'car') stats[log.employee_id].car++;
+        else if (type === 'motorcycle' || type === 'bike') stats[log.employee_id].motorcycle++;
         else stats[log.employee_id].win++;
     });
     
