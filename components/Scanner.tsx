@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, RefreshCw, Save, CheckCircle, AlertTriangle, Search, User, Bike } from 'lucide-react';
+import { Camera, RefreshCw, Save, CheckCircle, AlertTriangle, Search, User, Bike, Zap } from 'lucide-react';
 import { identifyLicensePlate } from '../services/geminiService';
 import { searchVehicleByPlate, saveScanLog, getEmployees } from '../services/supabaseService';
 import { Employee, Vehicle } from '../types';
@@ -18,96 +18,64 @@ export const Scanner: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmpId, setSelectedEmpId] = useState('');
 
-  // Start Camera with High Resolution and Web Checks
   const startCamera = async () => {
     setMessage(null);
-    
-    // Web Requirement: HTTPS Check
     if (!window.isSecureContext && window.location.hostname !== 'localhost') {
-      setMessage({ type: 'error', text: 'Browser requires HTTPS for Camera access.' });
+      setMessage({ type: 'error', text: 'Browser requires HTTPS.' });
       return;
     }
-
     try {
       const constraints = {
-        video: { 
-          facingMode: 'environment',
-          width: { ideal: 1920 }, // Request Full HD for better OCR
-          height: { ideal: 1080 }
-        }
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
       };
-
       const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       setStream(mediaStream);
-      
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
-        // Wait for video to actually play to avoid black screen issues
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch(e => console.error("Play error:", e));
-        };
       }
     } catch (err: any) {
-      console.error("Camera Error:", err);
-      if (err.name === 'NotAllowedError') {
-        setMessage({ type: 'error', text: 'กรุณาอนุญาตให้เข้าถึงกล้องใน Browser' });
-      } else if (err.name === 'NotFoundError') {
-        setMessage({ type: 'error', text: 'ไม่พบกล้องในอุปกรณ์นี้' });
-      } else {
-        setMessage({ type: 'error', text: 'ไม่สามารถเปิดกล้องได้: ' + err.message });
-      }
+      console.error(err);
+      setMessage({ type: 'error', text: 'ไม่สามารถเปิดกล้องได้' });
     }
   };
 
   useEffect(() => {
     startCamera();
     getEmployees().then(setEmployees);
-    
     return () => {
-      // Cleanup: Stop tracks when unmounting
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
+      if (stream) stream.getTracks().forEach(track => track.stop());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const captureAndScan = async () => {
     if (!videoRef.current || !canvasRef.current) return;
-    
     setScanning(true);
     setResult(null);
     setMessage(null);
 
-    // Draw video to canvas
     const context = canvasRef.current.getContext('2d');
     if (context) {
       canvasRef.current.width = videoRef.current.videoWidth;
       canvasRef.current.height = videoRef.current.videoHeight;
       context.drawImage(videoRef.current, 0, 0);
-      
       const base64Image = canvasRef.current.toDataURL('image/jpeg', 0.9).split(',')[1];
       
-      // 1. Send to Gemini
       try {
         const aiResult = await identifyLicensePlate(base64Image);
-        
         if (aiResult?.plate) {
            setManualPlate(aiResult.plate);
-           // 2. Search in DB
            const dbResult = await searchVehicleByPlate(aiResult.plate);
            if (dbResult) {
              setResult(dbResult);
              setMessage({ type: 'success', text: `พบข้อมูล: ${dbResult.employee.first_name}` });
            } else {
-             setMessage({ type: 'error', text: `ไม่พบรถทะเบียน ${aiResult.plate} ในระบบ` });
-             // Optional: Suggest adding new vehicle if not found?
+             setMessage({ type: 'error', text: `ไม่พบรถทะเบียน ${aiResult.plate} ในระบบ (ลองค้นหาด้วยมือ)` });
            }
         } else {
-            setMessage({ type: 'error', text: 'AI มองไม่เห็นป้ายทะเบียนชัดเจน ลองขยับกล้อง' });
+            setMessage({ type: 'error', text: 'AI อ่านป้ายไม่ชัดเจน' });
         }
       } catch (err) {
-          setMessage({ type: 'error', text: 'เกิดข้อผิดพลาดในการเชื่อมต่อ AI' });
+          setMessage({ type: 'error', text: 'Error เชื่อมต่อ AI' });
       }
     }
     setScanning(false);
@@ -116,7 +84,10 @@ export const Scanner: React.FC = () => {
   const handleManualSearch = async () => {
      if(!manualPlate) return;
      setScanning(true);
-     const dbResult = await searchVehicleByPlate(manualPlate);
+     // Auto-remove spaces for search stability
+     const cleanPlate = manualPlate.replace(/\s+/g, '');
+     
+     const dbResult = await searchVehicleByPlate(cleanPlate);
      if (dbResult) {
         setResult(dbResult);
         setMessage({ type: 'success', text: 'พบข้อมูลพนักงาน' });
@@ -136,7 +107,7 @@ export const Scanner: React.FC = () => {
               timestamp: new Date().toISOString(),
               vehicle_type: result.vehicle.type
           });
-          setMessage({ type: 'success', text: 'บันทึกเรียบร้อย' });
+          setMessage({ type: 'success', text: 'บันทึกสำเร็จ' });
           setResult(null);
           setManualPlate('');
           setTimeout(() => setMessage(null), 3000);
@@ -149,137 +120,118 @@ export const Scanner: React.FC = () => {
       if(!selectedEmpId) return;
       try {
           await saveScanLog({
-              vehicle_id: 'win-no-vehicle', 
+              vehicle_id: null as any, 
               employee_id: selectedEmpId,
               timestamp: new Date().toISOString(),
               vehicle_type: 'win'
           });
           setShowWinModal(false);
-          setMessage({ type: 'success', text: 'บันทึก นั่งวิน/รับจ้าง เรียบร้อย' });
+          setMessage({ type: 'success', text: 'บันทึก (วิน) เรียบร้อย' });
           setTimeout(() => setMessage(null), 3000);
       } catch (e) {
-          console.error(e);
-          setMessage({ type: 'error', text: 'บันทึกไม่สำเร็จ (ตรวจสอบข้อมูล)' });
+          setMessage({ type: 'error', text: 'บันทึกไม่สำเร็จ' });
       }
   }
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 p-4 space-y-4 pb-24 overflow-y-auto min-h-[80vh]">
-      {/* Camera View */}
-      <div className="relative w-full aspect-[3/4] md:aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl border-4 border-white/50 group">
-        <video 
-          ref={videoRef} 
-          autoPlay 
-          playsInline 
-          muted
-          className="w-full h-full object-cover" 
-        />
+    <div className="flex flex-col h-full bg-slate-50 p-4 space-y-4 pb-24 overflow-y-auto">
+      {/* Camera */}
+      <div className="relative w-full aspect-[4/3] bg-black rounded-3xl overflow-hidden shadow-2xl border-2 border-white/50 group">
+        <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
         <canvas ref={canvasRef} className="hidden" />
         
-        {/* Scanning Animation Overlay */}
         {scanning && (
-            <div className="absolute inset-0 bg-gradient-to-b from-teal-500/20 to-transparent animate-scan z-10 pointer-events-none border-b-2 border-teal-400"></div>
+            <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/20 to-transparent animate-scan z-10 pointer-events-none border-b-2 border-indigo-400"></div>
         )}
 
-        {/* Overlay Guides */}
-        <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-8">
-            <div className="w-full h-32 border-2 border-teal-400/80 rounded-xl relative bg-white/5 backdrop-blur-[2px]">
-                <div className="absolute top-0 left-0 w-4 h-4 border-t-4 border-l-4 border-teal-400 -mt-1 -ml-1"></div>
-                <div className="absolute top-0 right-0 w-4 h-4 border-t-4 border-r-4 border-teal-400 -mt-1 -mr-1"></div>
-                <div className="absolute bottom-0 left-0 w-4 h-4 border-b-4 border-l-4 border-teal-400 -mb-1 -ml-1"></div>
-                <div className="absolute bottom-0 right-0 w-4 h-4 border-b-4 border-r-4 border-teal-400 -mb-1 -mr-1"></div>
-                <div className="absolute -bottom-10 w-full text-center">
-                    <span className="text-teal-200 text-xs bg-black/60 px-3 py-1 rounded-full backdrop-blur-md border border-white/10">
-                        {scanning ? 'AI กำลังวิเคราะห์...' : 'จัดป้ายทะเบียนให้อยู่ในกรอบ'}
+        <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-8">
+            <div className="w-64 h-32 border-2 border-white/80 rounded-xl relative">
+                <div className="absolute -bottom-12 w-full text-center">
+                    <span className="text-white text-xs bg-black/50 px-3 py-1 rounded-full backdrop-blur-md">
+                        {scanning ? 'กำลังค้นหา...' : 'กรอบป้ายทะเบียน'}
                     </span>
                 </div>
             </div>
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-col gap-3">
-          <button
-            onClick={captureAndScan}
-            disabled={scanning}
-            className={`w-full py-4 rounded-2xl text-white font-bold text-lg shadow-lg shadow-teal-500/30 transition-all transform active:scale-95 flex items-center justify-center gap-2 ${
-                scanning ? 'bg-slate-400 cursor-wait' : 'bg-gradient-to-r from-teal-400 to-cyan-600'
-            }`}
-          >
-            {scanning ? 'กำลังประมวลผล...' : <><Camera size={24} /> สแกนด้วย AI</>}
-          </button>
+      {/* Main Action Button */}
+      <button
+        onClick={captureAndScan}
+        disabled={scanning}
+        className={`w-full py-5 rounded-2xl text-white font-bold text-xl shadow-xl shadow-indigo-500/30 transition-all active:scale-95 flex items-center justify-center gap-3 ${
+            scanning ? 'bg-slate-400' : 'bg-gradient-to-r from-indigo-600 to-purple-600'
+        }`}
+      >
+        {scanning ? 'Processing...' : <><Camera size={28} /> สแกนป้ายทะเบียน</>}
+      </button>
 
+      {/* Search & Win */}
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 space-y-3">
           <div className="flex gap-2">
-            <input 
-                type="text" 
-                value={manualPlate}
-                onChange={(e) => setManualPlate(e.target.value)}
-                placeholder="หรือพิมพ์ทะเบียน..."
-                className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400 shadow-sm"
-            />
+            <div className="relative flex-1">
+                <input 
+                    type="text" 
+                    value={manualPlate}
+                    onChange={(e) => setManualPlate(e.target.value)}
+                    placeholder="ค้นหาทะเบียน (เช่น 1กก1234)"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-4 pr-4 py-3 text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+            </div>
             <button 
                 onClick={handleManualSearch}
-                className="bg-white border border-slate-200 text-slate-600 p-3 rounded-xl hover:bg-slate-50"
+                className="bg-indigo-50 text-indigo-600 px-4 py-3 rounded-xl border border-indigo-100 hover:bg-indigo-100"
             >
                 <Search size={24} />
             </button>
           </div>
-
+          
           <button 
             onClick={() => setShowWinModal(true)}
-            className="w-full py-3 bg-orange-100 text-orange-700 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-orange-200 transition-colors"
+            className="w-full py-3 bg-orange-50 text-orange-600 rounded-xl font-semibold flex items-center justify-center gap-2 border border-orange-100 hover:bg-orange-100"
           >
-              <Bike size={20} /> บันทึก นั่งวิน/รถรับจ้าง (ไม่มีรถ)
+              <Bike size={20} /> บันทึก วิน/รถรับจ้าง
           </button>
       </div>
 
-      {/* Message Banner */}
+      {/* Status Message */}
       {message && (
-        <div className={`p-4 rounded-xl flex items-center gap-3 animate-fade-in-up ${
-            message.type === 'success' ? 'bg-green-100 text-green-800 border border-green-200' : 
-            message.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-blue-50 text-blue-700'
+        <div className={`p-4 rounded-xl flex items-center gap-3 animate-fade-in-up shadow-md ${
+            message.type === 'success' ? 'bg-green-500 text-white' : 
+            message.type === 'error' ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'
         }`}>
-            {message.type === 'success' ? <CheckCircle size={20}/> : <AlertTriangle size={20}/>}
-            <span className="font-medium text-sm">{message.text}</span>
+            {message.type === 'success' ? <CheckCircle size={24}/> : <AlertTriangle size={24}/>}
+            <span className="font-medium text-base">{message.text}</span>
         </div>
       )}
 
       {/* Result Card */}
       {result && (
-        <div className="bg-white rounded-3xl shadow-xl p-6 border border-slate-100 space-y-4 animate-fade-in-up">
-            <div className="flex items-start gap-4">
-                <div className="w-20 h-20 rounded-full bg-slate-100 overflow-hidden shadow-inner border-2 border-teal-100">
-                    <img src={result.employee.photo_url || "https://picsum.photos/200"} alt="Employee" className="w-full h-full object-cover" />
-                </div>
-                <div className="flex-1">
-                    <h3 className="text-xl font-bold text-slate-800">{result.employee.first_name} {result.employee.last_name}</h3>
-                    <p className="text-slate-500 text-sm">{result.employee.position}</p>
-                    <span className="inline-block mt-1 px-3 py-1 bg-teal-50 text-teal-600 text-xs rounded-full font-medium">
-                        {result.employee.department}
-                    </span>
+        <div className="bg-white rounded-3xl shadow-xl p-6 border-t-4 border-indigo-500 space-y-4 animate-slide-up">
+            <div className="flex items-center gap-4">
+                <img src={result.employee.photo_url || "https://picsum.photos/200"} className="w-20 h-20 rounded-full border-4 border-slate-50 shadow-sm object-cover" />
+                <div>
+                    <h3 className="text-2xl font-bold text-slate-800">{result.employee.first_name} {result.employee.last_name}</h3>
+                    <p className="text-indigo-600 font-medium">{result.employee.department}</p>
                 </div>
             </div>
 
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center justify-between">
-                <div>
-                    <p className="text-xs text-slate-400 uppercase font-semibold tracking-wider">ยานพาหนะ</p>
-                    <p className="text-lg font-bold text-slate-700">{result.vehicle.make} {result.vehicle.model}</p>
-                    <p className="text-sm text-slate-500">{result.vehicle.color} • {result.vehicle.license_plate}</p>
-                </div>
-                <div className="text-right">
-                    <span className={`px-3 py-1 rounded-lg text-sm font-bold ${
-                        result.vehicle.type === 'car' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'
-                    }`}>
-                        {result.vehicle.type === 'car' ? 'รถยนต์' : 'มอเตอร์ไซค์'}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div className="flex justify-between items-center mb-1">
+                    <span className="text-xs font-bold text-slate-400 uppercase">ทะเบียน</span>
+                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${result.vehicle.type==='car'?'bg-blue-100 text-blue-600':'bg-orange-100 text-orange-600'}`}>
+                        {result.vehicle.type === 'car' ? 'Car' : 'Moto'}
                     </span>
                 </div>
+                <div className="text-3xl font-black text-slate-800 tracking-tight">{result.vehicle.license_plate}</div>
+                <div className="text-sm text-slate-500">{result.vehicle.make} {result.vehicle.model} - {result.vehicle.color}</div>
             </div>
 
             <button 
                 onClick={handleSave}
-                className="w-full bg-teal-600 text-white py-3 rounded-xl font-semibold shadow-lg shadow-teal-200/50 hover:bg-teal-700 flex items-center justify-center gap-2"
+                className="w-full bg-green-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-green-200 hover:bg-green-600 flex items-center justify-center gap-2 text-lg"
             >
-                <Save size={20} /> ยืนยันการบันทึก
+                <Save size={24} /> ยืนยัน (Confirm)
             </button>
         </div>
       )}
@@ -288,27 +240,21 @@ export const Scanner: React.FC = () => {
       {showWinModal && (
         <div className="fixed inset-0 bg-black/60 z-[60] flex items-end sm:items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl animate-slide-up">
-                <h3 className="text-xl font-bold mb-4 text-slate-800">บันทึกการเดินทาง (วิน/รับจ้าง)</h3>
-                <p className="text-sm text-slate-500 mb-4">เลือกพนักงานที่เดินทางมาโดยรถรับจ้าง</p>
-                
+                <h3 className="text-xl font-bold mb-4 text-slate-800">บันทึกวิน/รถรับจ้าง</h3>
                 <div className="space-y-4">
-                    <div className="relative">
-                        <User className="absolute left-3 top-3 text-slate-400" size={20}/>
-                        <select 
-                            className="w-full p-3 pl-10 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-orange-200 outline-none appearance-none"
-                            value={selectedEmpId}
-                            onChange={(e) => setSelectedEmpId(e.target.value)}
-                        >
-                            <option value="">-- เลือกพนักงาน --</option>
-                            {employees.map(emp => (
-                                <option key={emp.id} value={emp.id}>{emp.first_name} {emp.last_name} ({emp.department})</option>
-                            ))}
-                        </select>
-                    </div>
-
-                    <div className="flex gap-3 pt-2">
-                        <button onClick={() => setShowWinModal(false)} className="flex-1 py-3 text-slate-500 bg-slate-100 rounded-xl font-medium">ยกเลิก</button>
-                        <button onClick={handleSaveWin} className="flex-1 py-3 bg-orange-500 text-white rounded-xl font-bold shadow-lg shadow-orange-200">บันทึก</button>
+                    <select 
+                        className="w-full p-4 bg-slate-50 rounded-xl border border-slate-200 text-lg"
+                        value={selectedEmpId}
+                        onChange={(e) => setSelectedEmpId(e.target.value)}
+                    >
+                        <option value="">-- เลือกพนักงาน --</option>
+                        {employees.map(emp => (
+                            <option key={emp.id} value={emp.id}>{emp.first_name} {emp.last_name}</option>
+                        ))}
+                    </select>
+                    <div className="flex gap-3">
+                        <button onClick={() => setShowWinModal(false)} className="flex-1 py-4 text-slate-500 bg-slate-100 rounded-xl font-bold">ยกเลิก</button>
+                        <button onClick={handleSaveWin} className="flex-1 py-4 bg-orange-500 text-white rounded-xl font-bold shadow-lg">บันทึก</button>
                     </div>
                 </div>
             </div>

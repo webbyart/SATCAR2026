@@ -1,20 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Search, Car, Bike, Camera, X } from 'lucide-react';
-import { getVehicles, getEmployees, createVehicle } from '../services/supabaseService';
+import { Plus, Car, Bike, Camera, X, Clock, Calendar } from 'lucide-react';
+import { getVehicles, getEmployees, createVehicle, getVehicleScanHistory } from '../services/supabaseService';
 import { identifyLicensePlate } from '../services/geminiService';
-import { Vehicle, Employee } from '../types';
+import { Vehicle, Employee, ScanLog } from '../types';
 
 export const VehicleList: React.FC = () => {
   const [vehicles, setVehicles] = useState<(Vehicle & { employee?: Employee })[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   
+  // Modals
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [selectedVehicle, setSelectedVehicle] = useState<(Vehicle & { employee?: Employee }) | null>(null);
+  const [historyLogs, setHistoryLogs] = useState<ScanLog[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   // Form State
   const [formData, setFormData] = useState<Partial<Vehicle>>({ type: 'car' });
   const [selectedEmp, setSelectedEmp] = useState('');
   
-  // Camera for Reg
+  // Camera
   const videoRef = useRef<HTMLVideoElement>(null);
   const [showCamera, setShowCamera] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -31,23 +37,26 @@ export const VehicleList: React.FC = () => {
     setLoading(false);
   };
 
+  const handleVehicleClick = async (vehicle: Vehicle & { employee?: Employee }) => {
+      setSelectedVehicle(vehicle);
+      setShowHistoryModal(true);
+      setHistoryLoading(true);
+      const logs = await getVehicleScanHistory(vehicle.id);
+      setHistoryLogs(logs);
+      setHistoryLoading(false);
+  };
+
+  // ... (Camera and Form logic remains similar but uses new styles) ...
   const startCamera = async () => {
       setShowCamera(true);
-      if (!window.isSecureContext && window.location.hostname !== 'localhost') {
-        alert("Browser requires HTTPS for Camera access.");
-        return;
-      }
-
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
             video: { facingMode: 'environment', width: { ideal: 1920 } } 
         });
-        if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-        }
+        if (videoRef.current) videoRef.current.srcObject = stream;
       } catch (e) {
           console.error(e);
-          alert("ไม่สามารถเปิดกล้องได้");
+          alert("Error opening camera");
           setShowCamera(false);
       }
   };
@@ -55,8 +64,6 @@ export const VehicleList: React.FC = () => {
   const handleScanPlate = async () => {
     if (!videoRef.current) return;
     setScanning(true);
-    
-    // Capture
     const canvas = document.createElement('canvas');
     canvas.width = videoRef.current.videoWidth;
     canvas.height = videoRef.current.videoHeight;
@@ -73,26 +80,17 @@ export const VehicleList: React.FC = () => {
                 make: result.make || prev.make,
                 color: result.color || prev.color
             }));
-            
-            // Stop Camera
-            if (videoRef.current && videoRef.current.srcObject) {
-                const stream = videoRef.current.srcObject as MediaStream;
-                stream.getTracks().forEach(t => t.stop());
-            }
-            setShowCamera(false);
+            closeCamera();
         } else {
-            alert("AI มองไม่เห็นเลขทะเบียนที่ชัดเจน กรุณาลองใหม่ หรือปรับแสงให้สว่างขึ้น");
+            alert("AI could not read plate. Please try again.");
         }
-    } catch (e) {
-        alert("เกิดข้อผิดพลาดในการเชื่อมต่อ AI");
-    }
+    } catch (e) { console.error(e); }
     setScanning(false);
   };
 
   const closeCamera = () => {
-      if (videoRef.current && videoRef.current.srcObject) {
-          const stream = videoRef.current.srcObject as MediaStream;
-          stream.getTracks().forEach(t => t.stop());
+      if (videoRef.current?.srcObject) {
+          (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       }
       setShowCamera(false);
   }
@@ -103,38 +101,42 @@ export const VehicleList: React.FC = () => {
 
     await createVehicle({
         employee_id: selectedEmp,
-        license_plate: formData.license_plate || '',
-        province: formData.province || 'กรุงเทพมหานคร',
+        license_plate: formData.license_plate,
+        province: formData.province || 'ไม่ระบุ',
         type: formData.type || 'car',
         make: formData.make || '',
         model: formData.model || '',
         color: formData.color || '',
-        photo_url: 'https://picsum.photos/400/300' // Placeholder
+        photo_url: 'https://picsum.photos/400/300'
     });
     
-    setShowModal(false);
-    setFormData({ type: 'car' }); // Reset
+    setShowAddModal(false);
+    setFormData({ type: 'car' });
     loadData();
   };
 
   return (
     <div className="p-4 pb-24 bg-slate-50 min-h-screen">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-slate-800">ทะเบียนรถทั้งหมด</h2>
+        <h2 className="text-2xl font-bold text-slate-800">ยานพาหนะ</h2>
         <button 
-          onClick={() => setShowModal(true)}
-          className="bg-teal-500 text-white p-2 rounded-full shadow-lg hover:bg-teal-600 transition-colors"
+          onClick={() => setShowAddModal(true)}
+          className="bg-indigo-600 text-white p-3 rounded-full shadow-lg hover:bg-indigo-700"
         >
           <Plus size={24} />
         </button>
       </div>
 
-      {/* List */}
+      {/* Vehicle List */}
       <div className="space-y-4">
-          {loading ? <p className="text-center text-slate-400">กำลังโหลดข้อมูล...</p> : 
+          {loading ? <p className="text-center text-slate-400">Loading...</p> : 
            vehicles.map(v => (
-              <div key={v.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${v.type === 'car' ? 'bg-blue-100 text-blue-500' : 'bg-orange-100 text-orange-500'}`}>
+              <div 
+                key={v.id} 
+                onClick={() => handleVehicleClick(v)}
+                className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 active:scale-98 transition-transform cursor-pointer"
+              >
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${v.type === 'car' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>
                       {v.type === 'car' ? <Car size={24}/> : <Bike size={24}/>}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -143,55 +145,96 @@ export const VehicleList: React.FC = () => {
                         <span className="text-xs text-slate-400 truncate ml-2">{v.province}</span>
                       </div>
                       <p className="text-sm text-slate-600 truncate">{v.make} {v.model} • {v.color}</p>
-                      <p className="text-xs text-teal-600 mt-1 font-medium truncate">เจ้าของ: {v.employee?.first_name} {v.employee?.last_name}</p>
+                      <p className="text-xs text-indigo-500 mt-1 font-medium truncate">Owner: {v.employee?.first_name} {v.employee?.last_name}</p>
                   </div>
               </div>
            ))
           }
       </div>
 
+      {/* History Modal */}
+      {showHistoryModal && selectedVehicle && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm">
+              <div className="bg-white w-full max-w-md h-[85vh] sm:h-auto sm:max-h-[80vh] rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl flex flex-col animate-slide-up">
+                  <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+                      <div>
+                          <h3 className="text-2xl font-bold text-slate-800">{selectedVehicle.license_plate}</h3>
+                          <p className="text-sm text-slate-500">ประวัติการเข้า-ออก</p>
+                      </div>
+                      <button onClick={() => setShowHistoryModal(false)} className="bg-slate-100 p-2 rounded-full"><X size={20}/></button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+                      {historyLoading ? (
+                          <p className="text-center text-slate-400 mt-10">กำลังโหลดประวัติ...</p>
+                      ) : historyLogs.length === 0 ? (
+                          <div className="text-center py-10 text-slate-400 flex flex-col items-center">
+                              <Clock size={48} className="mb-2 opacity-20"/>
+                              <p>ยังไม่มีประวัติการบันทึก</p>
+                          </div>
+                      ) : (
+                          historyLogs.map((log) => (
+                              <div key={log.id} className="flex gap-4 relative pl-4">
+                                  {/* Timeline Line */}
+                                  <div className="absolute left-0 top-2 bottom-0 w-0.5 bg-slate-200"></div>
+                                  <div className="absolute left-[-4px] top-2 w-2.5 h-2.5 rounded-full bg-indigo-500 ring-4 ring-white"></div>
+                                  
+                                  <div className="flex-1 pb-6">
+                                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                          <div className="flex items-center gap-2 mb-1">
+                                              <Calendar size={14} className="text-indigo-400"/>
+                                              <span className="text-sm font-bold text-slate-700">
+                                                  {new Date(log.timestamp).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}
+                                              </span>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                              <Clock size={14} className="text-indigo-400"/>
+                                              <span className="text-2xl font-mono font-medium text-slate-800">
+                                                  {new Date(log.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                                              </span>
+                                          </div>
+                                      </div>
+                                  </div>
+                              </div>
+                          ))
+                      )}
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* Add Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4 backdrop-blur-sm">
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl animate-fade-in-up max-h-[90vh] overflow-y-auto">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-xl font-bold text-slate-800">ลงทะเบียนรถใหม่</h3>
-                    <button onClick={() => setShowModal(false)}><X className="text-slate-400"/></button>
+                    <button onClick={() => setShowAddModal(false)}><X className="text-slate-400"/></button>
                 </div>
                 
                 <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="block text-sm text-slate-500 mb-1">เจ้าของรถ</label>
-                        <div className="relative">
-                            <select 
-                                className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-teal-200 appearance-none"
-                                value={selectedEmp}
-                                onChange={e => setSelectedEmp(e.target.value)}
-                                required
-                            >
-                                <option value="">เลือกพนักงาน...</option>
-                                {employees.map(e => (
-                                    <option key={e.id} value={e.id}>{e.first_name} {e.last_name}</option>
-                                ))}
-                            </select>
-                             <div className="absolute right-3 top-3.5 pointer-events-none text-slate-400">▼</div>
-                        </div>
-                    </div>
+                    <select 
+                        className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200 outline-none"
+                        value={selectedEmp}
+                        onChange={e => setSelectedEmp(e.target.value)}
+                        required
+                    >
+                        <option value="">เจ้าของรถ...</option>
+                        {employees.map(e => <option key={e.id} value={e.id}>{e.first_name} {e.last_name}</option>)}
+                    </select>
 
                     <div className="grid grid-cols-2 gap-3">
                          <div 
                            onClick={() => setFormData({...formData, type: 'car'})}
-                           className={`p-3 rounded-xl border-2 cursor-pointer flex flex-col items-center gap-2 transition-all ${formData.type === 'car' ? 'border-teal-500 bg-teal-50' : 'border-slate-100 hover:border-slate-200'}`}
+                           className={`p-3 rounded-xl border-2 cursor-pointer flex flex-col items-center gap-2 ${formData.type === 'car' ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-100 text-slate-400'}`}
                          >
-                            <Car className={formData.type === 'car' ? 'text-teal-600' : 'text-slate-400'} />
-                            <span className={`text-sm font-medium ${formData.type === 'car' ? 'text-teal-700' : 'text-slate-500'}`}>รถยนต์</span>
+                            <Car/> <span className="text-sm font-bold">รถยนต์</span>
                          </div>
                          <div 
                            onClick={() => setFormData({...formData, type: 'motorcycle'})}
-                           className={`p-3 rounded-xl border-2 cursor-pointer flex flex-col items-center gap-2 transition-all ${formData.type === 'motorcycle' ? 'border-teal-500 bg-teal-50' : 'border-slate-100 hover:border-slate-200'}`}
+                           className={`p-3 rounded-xl border-2 cursor-pointer flex flex-col items-center gap-2 ${formData.type === 'motorcycle' ? 'border-orange-500 bg-orange-50 text-orange-700' : 'border-slate-100 text-slate-400'}`}
                          >
-                            <Bike className={formData.type === 'motorcycle' ? 'text-teal-600' : 'text-slate-400'} />
-                            <span className={`text-sm font-medium ${formData.type === 'motorcycle' ? 'text-teal-700' : 'text-slate-500'}`}>มอเตอร์ไซค์</span>
+                            <Bike/> <span className="text-sm font-bold">มอเตอร์ไซค์</span>
                          </div>
                     </div>
 
@@ -199,76 +242,32 @@ export const VehicleList: React.FC = () => {
                         <input 
                             type="text" 
                             placeholder="เลขทะเบียน (เช่น 1กข1234)"
-                            className="flex-1 p-3 bg-slate-50 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-teal-200"
+                            className="flex-1 p-3 bg-slate-50 rounded-xl border border-slate-200 outline-none"
                             value={formData.license_plate || ''}
                             onChange={e => setFormData({...formData, license_plate: e.target.value})}
                             required
                         />
-                        <button type="button" onClick={startCamera} className="bg-teal-100 p-3 rounded-xl text-teal-700 hover:bg-teal-200 shadow-sm border border-teal-200">
+                        <button type="button" onClick={startCamera} className="bg-indigo-100 p-3 rounded-xl text-indigo-700">
                             <Camera size={24} />
                         </button>
                     </div>
                     
-                    <div className="grid grid-cols-2 gap-3">
-                        <input 
-                            type="text" 
-                            placeholder="ยี่ห้อ (เช่น Toyota)" 
-                            className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-teal-200"
-                            value={formData.make || ''}
-                            onChange={e => setFormData({...formData, make: e.target.value})}
-                        />
-                        <input 
-                            type="text" 
-                            placeholder="รุ่น" 
-                            className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-teal-200"
-                            value={formData.model || ''}
-                            onChange={e => setFormData({...formData, model: e.target.value})}
-                        />
-                    </div>
-                    <input 
-                        type="text" 
-                        placeholder="สีรถ" 
-                        className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-teal-200"
-                        value={formData.color || ''}
-                        onChange={e => setFormData({...formData, color: e.target.value})}
-                    />
+                    <input type="text" placeholder="ยี่ห้อ (Toyota)" className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200" value={formData.make||''} onChange={e=>setFormData({...formData, make:e.target.value})}/>
+                    <input type="text" placeholder="สีรถ" className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200" value={formData.color||''} onChange={e=>setFormData({...formData, color:e.target.value})}/>
 
-                    <button type="submit" className="w-full bg-gradient-to-r from-teal-500 to-cyan-500 text-white py-3 rounded-xl font-bold shadow-lg mt-2 active:scale-95 transition-transform">
+                    <button type="submit" className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold shadow-lg">
                         บันทึกข้อมูล
                     </button>
                 </form>
 
                 {showCamera && (
                     <div className="fixed inset-0 bg-black z-[60] flex flex-col">
-                        <div className="relative flex-1">
-                             <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"/>
-                             
-                             {/* Overlay */}
-                             <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-8">
-                                <div className="w-full aspect-[4/3] border-2 border-teal-400 rounded-xl relative bg-white/5 backdrop-blur-[1px]">
-                                     {scanning && <div className="absolute inset-0 bg-teal-400/20 animate-scan"></div>}
-                                     <div className="absolute top-0 left-0 w-4 h-4 border-t-4 border-l-4 border-teal-400 -mt-1 -ml-1"></div>
-                                     <div className="absolute top-0 right-0 w-4 h-4 border-t-4 border-r-4 border-teal-400 -mt-1 -mr-1"></div>
-                                     <div className="absolute bottom-0 left-0 w-4 h-4 border-b-4 border-l-4 border-teal-400 -mb-1 -ml-1"></div>
-                                     <div className="absolute bottom-0 right-0 w-4 h-4 border-b-4 border-r-4 border-teal-400 -mb-1 -mr-1"></div>
-                                </div>
-                             </div>
-                        </div>
-
-                        <div className="bg-black p-6 pb-10 flex flex-col gap-4">
-                             <div className="text-white text-center text-sm opacity-80">ถ่ายภาพให้เห็นป้ายทะเบียนชัดเจน</div>
-                             <button 
-                                onClick={handleScanPlate} 
-                                disabled={scanning}
-                                className={`w-full py-4 rounded-2xl font-bold text-lg flex justify-center items-center gap-2 shadow-lg transition-transform active:scale-95 ${
-                                    scanning ? 'bg-slate-600 text-slate-300' : 'bg-white text-black'
-                                }`}
-                            >
-                                {scanning ? 'กำลังวิเคราะห์...' : <><Camera size={24}/> ถ่ายภาพ</>}
+                        <video ref={videoRef} autoPlay playsInline muted className="flex-1 object-cover"/>
+                        <div className="p-6 bg-black flex flex-col gap-4">
+                             <button onClick={handleScanPlate} disabled={scanning} className="w-full py-4 bg-white rounded-2xl font-bold text-lg">
+                                {scanning ? 'Scanning...' : 'ถ่ายภาพ'}
                             </button>
-                             <button onClick={closeCamera} className="w-full text-white/70 py-3 rounded-xl hover:bg-white/10">
-                                ยกเลิก
-                            </button>
+                             <button onClick={closeCamera} className="w-full text-white py-3">ยกเลิก</button>
                         </div>
                     </div>
                 )}
