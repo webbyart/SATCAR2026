@@ -174,6 +174,34 @@ export const createVehicle = async (vehicle: Omit<Vehicle, 'id' | 'created_at'>)
   return { data, error };
 };
 
+export const updateVehicle = async (id: string, updates: any) => {
+    // Create a shallow copy to modify
+    const cleanUpdates = { ...updates };
+    
+    // Remove fields that are not columns in the vehicles table
+    // 'employee' comes from the join, 'id' and 'created_at' should generally not be manually updated here
+    delete cleanUpdates.employee; 
+    delete cleanUpdates.id;
+    delete cleanUpdates.created_at;
+
+    // Clean plate if it exists in updates
+    if (cleanUpdates.license_plate) {
+        cleanUpdates.license_plate = cleanUpdates.license_plate.replace(/\s/g, '');
+    }
+    
+    const { data, error } = await supabase
+        .from('vehicles')
+        .update(cleanUpdates)
+        .eq('id', id)
+        .select();
+    
+    if (error) {
+        console.error("Error updating vehicle:", error.message);
+        throw error;
+    }
+    return data;
+};
+
 export const saveScanLog = async (log: Omit<ScanLog, 'id'>) => {
   const { data, error } = await supabase.from('scan_logs').insert(log);
   if (error) console.error("Error saving log:", error.message);

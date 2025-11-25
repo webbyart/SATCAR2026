@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Car, Bike, Camera, X, Clock, Calendar } from 'lucide-react';
-import { getVehicles, getEmployees, createVehicle, getVehicleScanHistory } from '../services/supabaseService';
+import { Plus, Car, Bike, Camera, X, Clock, Calendar, Edit2, Save, ArrowLeft } from 'lucide-react';
+import { getVehicles, getEmployees, createVehicle, getVehicleScanHistory, updateVehicle } from '../services/supabaseService';
 import { identifyLicensePlate } from '../services/geminiService';
 import { Vehicle, Employee, ScanLog } from '../types';
 
@@ -12,11 +12,17 @@ export const VehicleList: React.FC = () => {
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  
+  // Selection & History
   const [selectedVehicle, setSelectedVehicle] = useState<(Vehicle & { employee?: Employee }) | null>(null);
   const [historyLogs, setHistoryLogs] = useState<ScanLog[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  // Form State
+  // Edit Mode
+  const [isEditing, setIsEditing] = useState(false);
+  const [editFormData, setEditFormData] = useState<Partial<Vehicle>>({});
+
+  // Add Form State
   const [formData, setFormData] = useState<Partial<Vehicle>>({ type: 'car' });
   const [selectedEmp, setSelectedEmp] = useState('');
   
@@ -39,11 +45,28 @@ export const VehicleList: React.FC = () => {
 
   const handleVehicleClick = async (vehicle: Vehicle & { employee?: Employee }) => {
       setSelectedVehicle(vehicle);
+      setEditFormData(vehicle); // Pre-fill edit form
+      setIsEditing(false); // Reset edit mode
       setShowHistoryModal(true);
+      
       setHistoryLoading(true);
       const logs = await getVehicleScanHistory(vehicle.id);
       setHistoryLogs(logs);
       setHistoryLoading(false);
+  };
+
+  const handleUpdateVehicle = async () => {
+      if (!selectedVehicle || !editFormData.license_plate) return;
+      try {
+          await updateVehicle(selectedVehicle.id, editFormData);
+          setIsEditing(false);
+          // Refresh lists
+          loadData();
+          // Update selected view
+          setSelectedVehicle({ ...selectedVehicle, ...editFormData } as any);
+      } catch (e) {
+          alert('Failed to update vehicle');
+      }
   };
 
   // ... (Camera and Form logic remains similar but uses new styles) ...
@@ -152,51 +175,137 @@ export const VehicleList: React.FC = () => {
           }
       </div>
 
-      {/* History Modal */}
+      {/* History / Edit Modal */}
       {showHistoryModal && selectedVehicle && (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm">
-              <div className="bg-white w-full max-w-md h-[85vh] sm:h-auto sm:max-h-[80vh] rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl flex flex-col animate-slide-up">
+              <div className="bg-white w-full max-w-md h-[85vh] sm:h-auto sm:max-h-[85vh] rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl flex flex-col animate-slide-up">
+                  
+                  {/* Modal Header */}
                   <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
-                      <div>
-                          <h3 className="text-2xl font-bold text-slate-800">{selectedVehicle.license_plate}</h3>
-                          <p className="text-sm text-slate-500">ประวัติการเข้า-ออก</p>
+                      <div className="flex items-center gap-3">
+                          {isEditing && (
+                              <button onClick={() => setIsEditing(false)} className="bg-slate-100 p-2 rounded-full text-slate-600">
+                                  <ArrowLeft size={20}/>
+                              </button>
+                          )}
+                          <div>
+                              <h3 className="text-2xl font-bold text-slate-800">
+                                  {isEditing ? 'แก้ไขข้อมูล' : selectedVehicle.license_plate}
+                              </h3>
+                              {!isEditing && <p className="text-sm text-slate-500">ประวัติการเข้า-ออก</p>}
+                          </div>
                       </div>
-                      <button onClick={() => setShowHistoryModal(false)} className="bg-slate-100 p-2 rounded-full"><X size={20}/></button>
+                      <div className="flex gap-2">
+                        {!isEditing && (
+                            <button onClick={() => setIsEditing(true)} className="bg-slate-100 text-indigo-600 p-2 rounded-full">
+                                <Edit2 size={20}/>
+                            </button>
+                        )}
+                        <button onClick={() => setShowHistoryModal(false)} className="bg-slate-100 p-2 rounded-full"><X size={20}/></button>
+                      </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto space-y-4 pr-2">
-                      {historyLoading ? (
-                          <p className="text-center text-slate-400 mt-10">กำลังโหลดประวัติ...</p>
-                      ) : historyLogs.length === 0 ? (
-                          <div className="text-center py-10 text-slate-400 flex flex-col items-center">
-                              <Clock size={48} className="mb-2 opacity-20"/>
-                              <p>ยังไม่มีประวัติการบันทึก</p>
-                          </div>
-                      ) : (
-                          historyLogs.map((log) => (
-                              <div key={log.id} className="flex gap-4 relative pl-4">
-                                  {/* Timeline Line */}
-                                  <div className="absolute left-0 top-2 bottom-0 w-0.5 bg-slate-200"></div>
-                                  <div className="absolute left-[-4px] top-2 w-2.5 h-2.5 rounded-full bg-indigo-500 ring-4 ring-white"></div>
-                                  
-                                  <div className="flex-1 pb-6">
-                                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                                          <div className="flex items-center gap-2 mb-1">
-                                              <Calendar size={14} className="text-indigo-400"/>
-                                              <span className="text-sm font-bold text-slate-700">
-                                                  {new Date(log.timestamp).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}
-                                              </span>
-                                          </div>
-                                          <div className="flex items-center gap-2">
-                                              <Clock size={14} className="text-indigo-400"/>
-                                              <span className="text-2xl font-mono font-medium text-slate-800">
-                                                  {new Date(log.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
-                                              </span>
-                                          </div>
-                                      </div>
+                  {/* Body */}
+                  <div className="flex-1 overflow-y-auto pr-2">
+                      {isEditing ? (
+                          /* --- EDIT MODE --- */
+                          <div className="space-y-4 py-2">
+                               <div className="grid grid-cols-2 gap-3">
+                                   <div 
+                                     onClick={() => setEditFormData({...editFormData, type: 'car'})}
+                                     className={`p-4 rounded-xl border-2 cursor-pointer flex flex-col items-center gap-2 transition-all ${editFormData.type === 'car' ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-100 text-slate-400'}`}
+                                   >
+                                      <Car size={32}/> <span className="font-bold">รถยนต์</span>
+                                   </div>
+                                   <div 
+                                     onClick={() => setEditFormData({...editFormData, type: 'motorcycle'})}
+                                     className={`p-4 rounded-xl border-2 cursor-pointer flex flex-col items-center gap-2 transition-all ${editFormData.type === 'motorcycle' ? 'border-orange-500 bg-orange-50 text-orange-700' : 'border-slate-100 text-slate-400'}`}
+                                   >
+                                      <Bike size={32}/> <span className="font-bold">มอเตอร์ไซค์</span>
+                                   </div>
+                              </div>
+                              
+                              <div className="space-y-2">
+                                  <label className="text-xs font-bold text-slate-500 uppercase">ทะเบียน</label>
+                                  <input 
+                                    className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200" 
+                                    value={editFormData.license_plate || ''}
+                                    onChange={(e) => setEditFormData({...editFormData, license_plate: e.target.value})}
+                                  />
+                              </div>
+
+                              <div className="space-y-2">
+                                  <label className="text-xs font-bold text-slate-500 uppercase">จังหวัด</label>
+                                  <input 
+                                    className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200" 
+                                    value={editFormData.province || ''}
+                                    onChange={(e) => setEditFormData({...editFormData, province: e.target.value})}
+                                  />
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3">
+                                  <div className="space-y-2">
+                                      <label className="text-xs font-bold text-slate-500 uppercase">ยี่ห้อ</label>
+                                      <input 
+                                        className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200" 
+                                        value={editFormData.make || ''}
+                                        onChange={(e) => setEditFormData({...editFormData, make: e.target.value})}
+                                      />
+                                  </div>
+                                  <div className="space-y-2">
+                                      <label className="text-xs font-bold text-slate-500 uppercase">สี</label>
+                                      <input 
+                                        className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200" 
+                                        value={editFormData.color || ''}
+                                        onChange={(e) => setEditFormData({...editFormData, color: e.target.value})}
+                                      />
                                   </div>
                               </div>
-                          ))
+                              
+                              <button 
+                                onClick={handleUpdateVehicle}
+                                className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold shadow-lg mt-4 flex items-center justify-center gap-2"
+                              >
+                                  <Save size={20}/> บันทึกการแก้ไข
+                              </button>
+                          </div>
+                      ) : (
+                          /* --- HISTORY MODE --- */
+                          <div className="space-y-4">
+                              {historyLoading ? (
+                                  <p className="text-center text-slate-400 mt-10">กำลังโหลดประวัติ...</p>
+                              ) : historyLogs.length === 0 ? (
+                                  <div className="text-center py-10 text-slate-400 flex flex-col items-center">
+                                      <Clock size={48} className="mb-2 opacity-20"/>
+                                      <p>ยังไม่มีประวัติการบันทึก</p>
+                                  </div>
+                              ) : (
+                                  historyLogs.map((log) => (
+                                      <div key={log.id} className="flex gap-4 relative pl-4">
+                                          {/* Timeline Line */}
+                                          <div className="absolute left-0 top-2 bottom-0 w-0.5 bg-slate-200"></div>
+                                          <div className="absolute left-[-4px] top-2 w-2.5 h-2.5 rounded-full bg-indigo-500 ring-4 ring-white"></div>
+                                          
+                                          <div className="flex-1 pb-6">
+                                              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                                  <div className="flex items-center gap-2 mb-1">
+                                                      <Calendar size={14} className="text-indigo-400"/>
+                                                      <span className="text-sm font-bold text-slate-700">
+                                                          {new Date(log.timestamp).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}
+                                                      </span>
+                                                  </div>
+                                                  <div className="flex items-center gap-2">
+                                                      <Clock size={14} className="text-indigo-400"/>
+                                                      <span className="text-2xl font-mono font-medium text-slate-800">
+                                                          {new Date(log.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                                                      </span>
+                                                  </div>
+                                              </div>
+                                          </div>
+                                      </div>
+                                  ))
+                              )}
+                          </div>
                       )}
                   </div>
               </div>
