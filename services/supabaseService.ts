@@ -46,6 +46,26 @@ CREATE TABLE IF NOT EXISTS vehicles (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Add columns if they are missing (for existing tables)
+DO $$ 
+BEGIN 
+    BEGIN
+        ALTER TABLE vehicles ADD COLUMN province TEXT;
+    EXCEPTION
+        WHEN duplicate_column THEN RAISE NOTICE 'column province already exists in vehicles.';
+    END;
+    BEGIN
+        ALTER TABLE vehicles ADD COLUMN make TEXT;
+    EXCEPTION
+        WHEN duplicate_column THEN RAISE NOTICE 'column make already exists in vehicles.';
+    END;
+    BEGIN
+        ALTER TABLE vehicles ADD COLUMN color TEXT;
+    EXCEPTION
+        WHEN duplicate_column THEN RAISE NOTICE 'column color already exists in vehicles.';
+    END;
+END $$;
+
 -- Create Scan Logs Table
 CREATE TABLE IF NOT EXISTS scan_logs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -155,6 +175,24 @@ export const searchVehicleByPlate = async (plate: string): Promise<{ vehicle: Ve
   }
   
   return null;
+};
+
+export const checkVehicleEntryToday = async (vehicleId: string): Promise<boolean> => {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const { data, error } = await supabase
+        .from('scan_logs')
+        .select('id')
+        .eq('vehicle_id', vehicleId)
+        .gte('timestamp', startOfDay.toISOString());
+
+    if (error) {
+        console.error("Error checking duplicate entry:", error.message);
+        return false;
+    }
+    
+    return data && data.length > 0;
 };
 
 export const createEmployee = async (employee: Omit<Employee, 'id' | 'created_at'>) => {

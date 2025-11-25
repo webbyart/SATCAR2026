@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, RefreshCw, Save, CheckCircle, AlertTriangle, Search, User, Bike, Zap } from 'lucide-react';
+import { Camera, RefreshCw, Save, CheckCircle, AlertTriangle, Search, User, Bike, Zap, X } from 'lucide-react';
 import { identifyLicensePlate } from '../services/geminiService';
-import { searchVehicleByPlate, saveScanLog, getEmployees } from '../services/supabaseService';
+import { searchVehicleByPlate, saveScanLog, getEmployees, checkVehicleEntryToday } from '../services/supabaseService';
 import { Employee, Vehicle } from '../types';
 
 export const Scanner: React.FC = () => {
@@ -17,6 +17,9 @@ export const Scanner: React.FC = () => {
   const [showWinModal, setShowWinModal] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmpId, setSelectedEmpId] = useState('');
+
+  // Duplicate Check
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
 
   const startCamera = async () => {
     setMessage(null);
@@ -98,7 +101,20 @@ export const Scanner: React.FC = () => {
      setScanning(false);
   }
 
-  const handleSave = async () => {
+  const handlePreSaveCheck = async () => {
+      if (!result) return;
+      
+      // Check for duplicates logs for today
+      const isDuplicate = await checkVehicleEntryToday(result.vehicle.id);
+      
+      if (isDuplicate) {
+          setShowDuplicateModal(true);
+      } else {
+          executeSave();
+      }
+  };
+
+  const executeSave = async () => {
       if(!result) return;
       try {
           await saveScanLog({
@@ -110,11 +126,12 @@ export const Scanner: React.FC = () => {
           setMessage({ type: 'success', text: 'บันทึกสำเร็จ' });
           setResult(null);
           setManualPlate('');
+          setShowDuplicateModal(false);
           setTimeout(() => setMessage(null), 3000);
       } catch (e) {
           setMessage({ type: 'error', text: 'บันทึกไม่สำเร็จ' });
       }
-  }
+  };
 
   const handleSaveWin = async () => {
       if(!selectedEmpId) return;
@@ -228,7 +245,7 @@ export const Scanner: React.FC = () => {
             </div>
 
             <button 
-                onClick={handleSave}
+                onClick={handlePreSaveCheck}
                 className="w-full bg-green-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-green-200 hover:bg-green-600 flex items-center justify-center gap-2 text-lg"
             >
                 <Save size={24} /> ยืนยัน (Confirm)
@@ -236,11 +253,46 @@ export const Scanner: React.FC = () => {
         </div>
       )}
 
+      {/* Duplicate Warning Modal */}
+      {showDuplicateModal && result && (
+          <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4 backdrop-blur-sm">
+              <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl animate-fade-in-up">
+                  <div className="flex flex-col items-center text-center mb-4">
+                      <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mb-4">
+                          <AlertTriangle size={32} />
+                      </div>
+                      <h3 className="text-xl font-bold text-slate-800">มีการบันทึกวันนี้แล้ว</h3>
+                      <p className="text-slate-500 mt-2">
+                          รถทะเบียน <span className="font-bold text-slate-700">{result.vehicle.license_plate}</span> ได้ถูกบันทึกการเข้ามาแล้วในวันนี้
+                      </p>
+                      <p className="text-sm text-slate-400 mt-1">ต้องการบันทึกซ้ำหรือไม่?</p>
+                  </div>
+                  <div className="flex gap-3">
+                      <button 
+                        onClick={() => setShowDuplicateModal(false)} 
+                        className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold"
+                      >
+                          ยกเลิก
+                      </button>
+                      <button 
+                        onClick={executeSave} 
+                        className="flex-1 py-3 bg-yellow-500 text-white rounded-xl font-bold shadow-lg"
+                      >
+                          ยืนยันบันทึก
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* Win Modal */}
       {showWinModal && (
         <div className="fixed inset-0 bg-black/60 z-[60] flex items-end sm:items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl animate-slide-up">
-                <h3 className="text-xl font-bold mb-4 text-slate-800">บันทึกวิน/รถรับจ้าง</h3>
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold text-slate-800">บันทึกวิน/รถรับจ้าง</h3>
+                    <button onClick={() => setShowWinModal(false)}><X className="text-slate-400"/></button>
+                </div>
                 <div className="space-y-4">
                     <select 
                         className="w-full p-4 bg-slate-50 rounded-xl border border-slate-200 text-lg"

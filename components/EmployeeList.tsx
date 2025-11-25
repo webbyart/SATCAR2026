@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, User, MapPin, Briefcase, Car, Bike, Trophy, TrendingUp, AlertCircle, Database } from 'lucide-react';
+import { Plus, User, MapPin, Briefcase, Car, Bike, Trophy, TrendingUp, AlertCircle, Database, Zap } from 'lucide-react';
 import { getEmployees, getEmployeeScanStats, createEmployee } from '../services/supabaseService';
 import { Employee } from '../types';
 
@@ -52,6 +52,13 @@ export const EmployeeList: React.FC = () => {
       loadData();
   }
 
+  // Calculate Win Rate
+  const getWinRate = (stats: { car: number, motorcycle: number, win: number }) => {
+      const total = stats.car + stats.motorcycle + stats.win;
+      if (total === 0) return 0;
+      return Math.round((stats.win / total) * 100);
+  };
+
   return (
     <div className="p-4 pb-24 bg-slate-50 min-h-screen">
        <div className="flex justify-between items-center mb-6">
@@ -79,7 +86,9 @@ export const EmployeeList: React.FC = () => {
                 </div>
             </div>
         ) : (
-            employees.map(emp => (
+            employees.map(emp => {
+                const winRate = getWinRate(emp.stats || { car:0, motorcycle:0, win:0 });
+                return (
             <div key={emp.id} className="bg-white p-4 rounded-3xl shadow-md border border-slate-100 flex flex-col gap-4 transition-all hover:shadow-lg">
                 <div className="flex items-center gap-4">
                     <div className="relative">
@@ -96,33 +105,46 @@ export const EmployeeList: React.FC = () => {
                 </div>
                 
                 {/* Stats Row - Vibrant Design */}
-                <div className="grid grid-cols-2 gap-3 pt-2">
-                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-3 flex flex-col items-center justify-center relative overflow-hidden group">
+                <div className="grid grid-cols-3 gap-2 pt-2">
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-2 flex flex-col items-center justify-center relative overflow-hidden group">
                         <div className="absolute top-0 right-0 p-1 opacity-10 transform translate-x-2 -translate-y-2">
-                            <Car size={48} className="text-blue-600"/>
+                            <Car size={32} className="text-blue-600"/>
                         </div>
-                        <div className="flex items-center gap-1.5 text-blue-700 mb-0.5 z-10">
-                            <Car size={16} className="fill-blue-200"/> 
-                            <span className="text-[10px] font-bold uppercase tracking-widest">รถยนต์</span>
+                        <div className="flex items-center gap-1 text-blue-700 mb-0.5 z-10">
+                            <Car size={14} className="fill-blue-200"/> 
+                            <span className="text-[9px] font-bold uppercase tracking-widest">รถยนต์</span>
                         </div>
-                        <span className="text-3xl font-black text-blue-800 z-10 tracking-tight">{emp.stats?.car}</span>
-                        <span className="text-[10px] text-blue-600 font-medium z-10 bg-white/50 px-2 py-0.5 rounded-full mt-1">รายการ</span>
+                        <span className="text-2xl font-black text-blue-800 z-10 tracking-tight">{emp.stats?.car}</span>
                     </div>
 
-                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl p-3 flex flex-col items-center justify-center relative overflow-hidden group">
+                    <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl p-2 flex flex-col items-center justify-center relative overflow-hidden group">
                          <div className="absolute top-0 right-0 p-1 opacity-10 transform translate-x-2 -translate-y-2">
-                            <Bike size={48} className="text-orange-600"/>
+                            <Bike size={32} className="text-orange-600"/>
                         </div>
-                        <div className="flex items-center gap-1.5 text-orange-700 mb-0.5 z-10">
-                            <Bike size={16} className="fill-orange-200"/> 
-                            <span className="text-[10px] font-bold uppercase tracking-widest">มอเตอร์ไซค์</span>
+                        <div className="flex items-center gap-1 text-orange-700 mb-0.5 z-10">
+                            <Bike size={14} className="fill-orange-200"/> 
+                            <span className="text-[9px] font-bold uppercase tracking-widest">มอไซค์</span>
                         </div>
-                        <span className="text-3xl font-black text-orange-800 z-10 tracking-tight">{emp.stats?.motorcycle}</span>
-                        <span className="text-[10px] text-orange-600 font-medium z-10 bg-white/50 px-2 py-0.5 rounded-full mt-1">รายการ</span>
+                        <span className="text-2xl font-black text-orange-800 z-10 tracking-tight">{emp.stats?.motorcycle}</span>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl p-2 flex flex-col items-center justify-center relative overflow-hidden group">
+                         <div className="absolute top-0 right-0 p-1 opacity-10 transform translate-x-2 -translate-y-2">
+                            <Zap size={32} className="text-purple-600"/>
+                        </div>
+                        <div className="flex items-center gap-1 text-purple-700 mb-0.5 z-10">
+                            <Zap size={14} className="fill-purple-200"/> 
+                            <span className="text-[9px] font-bold uppercase tracking-widest">WinRate</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                            <span className="text-2xl font-black text-purple-800 z-10 tracking-tight">{winRate}%</span>
+                            <span className="text-[9px] text-purple-500 font-bold">({emp.stats?.win} ครั้ง)</span>
+                        </div>
                     </div>
                 </div>
             </div>
-        )))}
+        )})
+        )}
       </div>
 
       {/* Add Modal */}
