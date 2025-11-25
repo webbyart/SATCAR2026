@@ -1,0 +1,7 @@
+{
+  "name": "Sumino Aapico Vehicle System",
+  "description": "Luxurious vehicle tracking system for Sumino Aapico (Thailand) Co., Ltd.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
