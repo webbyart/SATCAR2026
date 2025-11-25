@@ -31,41 +31,71 @@ export const VehicleList: React.FC = () => {
     setLoading(false);
   };
 
-  const handleScanPlate = async () => {
-    if (!videoRef.current) return;
-    setScanning(true);
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
-    const base64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
-    
-    try {
-        const result = await identifyLicensePlate(base64);
-        if (result) {
-            setFormData(prev => ({ ...prev, license_plate: result.plate, province: result.province }));
-            setShowCamera(false);
-        } else {
-            alert("AI มองไม่เห็นเลขทะเบียนที่ชัดเจน กรุณาลองใหม่");
-        }
-    } catch (e) {
-        alert("เกิดข้อผิดพลาด");
-    }
-    setScanning(false);
-  };
-
   const startCamera = async () => {
       setShowCamera(true);
+      if (!window.isSecureContext && window.location.hostname !== 'localhost') {
+        alert("Browser requires HTTPS for Camera access.");
+        return;
+      }
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
             video: { facingMode: 'environment', width: { ideal: 1920 } } 
         });
-        if (videoRef.current) videoRef.current.srcObject = stream;
+        if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+        }
       } catch (e) {
+          console.error(e);
           alert("ไม่สามารถเปิดกล้องได้");
           setShowCamera(false);
       }
   };
+
+  const handleScanPlate = async () => {
+    if (!videoRef.current) return;
+    setScanning(true);
+    
+    // Capture
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
+    const base64 = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+    
+    try {
+        const result = await identifyLicensePlate(base64);
+        if (result) {
+            setFormData(prev => ({ 
+                ...prev, 
+                license_plate: result.plate, 
+                province: result.province,
+                make: result.make || prev.make,
+                color: result.color || prev.color
+            }));
+            
+            // Stop Camera
+            if (videoRef.current && videoRef.current.srcObject) {
+                const stream = videoRef.current.srcObject as MediaStream;
+                stream.getTracks().forEach(t => t.stop());
+            }
+            setShowCamera(false);
+        } else {
+            alert("AI มองไม่เห็นเลขทะเบียนที่ชัดเจน กรุณาลองใหม่ หรือปรับแสงให้สว่างขึ้น");
+        }
+    } catch (e) {
+        alert("เกิดข้อผิดพลาดในการเชื่อมต่อ AI");
+    }
+    setScanning(false);
+  };
+
+  const closeCamera = () => {
+      if (videoRef.current && videoRef.current.srcObject) {
+          const stream = videoRef.current.srcObject as MediaStream;
+          stream.getTracks().forEach(t => t.stop());
+      }
+      setShowCamera(false);
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -174,7 +204,7 @@ export const VehicleList: React.FC = () => {
                             onChange={e => setFormData({...formData, license_plate: e.target.value})}
                             required
                         />
-                        <button type="button" onClick={startCamera} className="bg-teal-100 p-3 rounded-xl text-teal-700 hover:bg-teal-200">
+                        <button type="button" onClick={startCamera} className="bg-teal-100 p-3 rounded-xl text-teal-700 hover:bg-teal-200 shadow-sm border border-teal-200">
                             <Camera size={24} />
                         </button>
                     </div>
@@ -209,17 +239,34 @@ export const VehicleList: React.FC = () => {
                 </form>
 
                 {showCamera && (
-                    <div className="absolute inset-0 bg-black rounded-3xl overflow-hidden flex flex-col z-10">
-                        <video ref={videoRef} autoPlay playsInline className="flex-1 object-cover"/>
-                        <div className="absolute bottom-6 left-6 right-6 flex flex-col gap-3">
-                            <button 
+                    <div className="fixed inset-0 bg-black z-[60] flex flex-col">
+                        <div className="relative flex-1">
+                             <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"/>
+                             
+                             {/* Overlay */}
+                             <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-8">
+                                <div className="w-full aspect-[4/3] border-2 border-teal-400 rounded-xl relative bg-white/5 backdrop-blur-[1px]">
+                                     {scanning && <div className="absolute inset-0 bg-teal-400/20 animate-scan"></div>}
+                                     <div className="absolute top-0 left-0 w-4 h-4 border-t-4 border-l-4 border-teal-400 -mt-1 -ml-1"></div>
+                                     <div className="absolute top-0 right-0 w-4 h-4 border-t-4 border-r-4 border-teal-400 -mt-1 -mr-1"></div>
+                                     <div className="absolute bottom-0 left-0 w-4 h-4 border-b-4 border-l-4 border-teal-400 -mb-1 -ml-1"></div>
+                                     <div className="absolute bottom-0 right-0 w-4 h-4 border-b-4 border-r-4 border-teal-400 -mb-1 -mr-1"></div>
+                                </div>
+                             </div>
+                        </div>
+
+                        <div className="bg-black p-6 pb-10 flex flex-col gap-4">
+                             <div className="text-white text-center text-sm opacity-80">ถ่ายภาพให้เห็นป้ายทะเบียนชัดเจน</div>
+                             <button 
                                 onClick={handleScanPlate} 
                                 disabled={scanning}
-                                className="w-full bg-white text-black py-4 rounded-2xl font-bold shadow-lg flex justify-center items-center gap-2"
+                                className={`w-full py-4 rounded-2xl font-bold text-lg flex justify-center items-center gap-2 shadow-lg transition-transform active:scale-95 ${
+                                    scanning ? 'bg-slate-600 text-slate-300' : 'bg-white text-black'
+                                }`}
                             >
-                                {scanning ? 'กำลังอ่าน...' : <><Camera size={20}/> ถ่ายภาพทะเบียน</>}
+                                {scanning ? 'กำลังวิเคราะห์...' : <><Camera size={24}/> ถ่ายภาพ</>}
                             </button>
-                             <button onClick={() => setShowCamera(false)} className="w-full bg-white/20 text-white py-3 rounded-xl backdrop-blur-md">
+                             <button onClick={closeCamera} className="w-full text-white/70 py-3 rounded-xl hover:bg-white/10">
                                 ยกเลิก
                             </button>
                         </div>

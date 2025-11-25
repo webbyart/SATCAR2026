@@ -18,37 +18,56 @@ export const Scanner: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmpId, setSelectedEmpId] = useState('');
 
-  // Start Camera with High Resolution
+  // Start Camera with High Resolution and Web Checks
   const startCamera = async () => {
-    try {
-      if (!window.isSecureContext && window.location.hostname !== 'localhost') {
-        setMessage({ type: 'error', text: 'Browser requires HTTPS for Camera access.' });
-        return;
-      }
+    setMessage(null);
+    
+    // Web Requirement: HTTPS Check
+    if (!window.isSecureContext && window.location.hostname !== 'localhost') {
+      setMessage({ type: 'error', text: 'Browser requires HTTPS for Camera access.' });
+      return;
+    }
 
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
+    try {
+      const constraints = {
         video: { 
           facingMode: 'environment',
-          width: { ideal: 1920 }, // Request HD
+          width: { ideal: 1920 }, // Request Full HD for better OCR
           height: { ideal: 1080 }
         }
-      });
+      };
+
+      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       setStream(mediaStream);
+      
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
+        // Wait for video to actually play to avoid black screen issues
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play().catch(e => console.error("Play error:", e));
+        };
       }
-    } catch (err) {
-      console.error(err);
-      setMessage({ type: 'error', text: 'ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตการเข้าถึง' });
+    } catch (err: any) {
+      console.error("Camera Error:", err);
+      if (err.name === 'NotAllowedError') {
+        setMessage({ type: 'error', text: 'กรุณาอนุญาตให้เข้าถึงกล้องใน Browser' });
+      } else if (err.name === 'NotFoundError') {
+        setMessage({ type: 'error', text: 'ไม่พบกล้องในอุปกรณ์นี้' });
+      } else {
+        setMessage({ type: 'error', text: 'ไม่สามารถเปิดกล้องได้: ' + err.message });
+      }
     }
   };
 
   useEffect(() => {
     startCamera();
-    // Pre-load employees for the Win modal
     getEmployees().then(setEmployees);
+    
     return () => {
-      stream?.getTracks().forEach(track => track.stop());
+      // Cleanup: Stop tracks when unmounting
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -67,7 +86,7 @@ export const Scanner: React.FC = () => {
       canvasRef.current.height = videoRef.current.videoHeight;
       context.drawImage(videoRef.current, 0, 0);
       
-      const base64Image = canvasRef.current.toDataURL('image/jpeg', 0.8).split(',')[1];
+      const base64Image = canvasRef.current.toDataURL('image/jpeg', 0.9).split(',')[1];
       
       // 1. Send to Gemini
       try {
@@ -82,6 +101,7 @@ export const Scanner: React.FC = () => {
              setMessage({ type: 'success', text: `พบข้อมูล: ${dbResult.employee.first_name}` });
            } else {
              setMessage({ type: 'error', text: `ไม่พบรถทะเบียน ${aiResult.plate} ในระบบ` });
+             // Optional: Suggest adding new vehicle if not found?
            }
         } else {
             setMessage({ type: 'error', text: 'AI มองไม่เห็นป้ายทะเบียนชัดเจน ลองขยับกล้อง' });
@@ -129,7 +149,7 @@ export const Scanner: React.FC = () => {
       if(!selectedEmpId) return;
       try {
           await saveScanLog({
-              vehicle_id: 'win-no-vehicle', // Special ID or handle in DB schema to allow null
+              vehicle_id: 'win-no-vehicle', 
               employee_id: selectedEmpId,
               timestamp: new Date().toISOString(),
               vehicle_type: 'win'
@@ -139,11 +159,6 @@ export const Scanner: React.FC = () => {
           setTimeout(() => setMessage(null), 3000);
       } catch (e) {
           console.error(e);
-          // Assuming FK constraint on vehicle_id might fail if not careful. 
-          // For this demo, let's assume schema allows null or we use a dummy vehicle if needed.
-          // Better approach: Update `saveScanLog` in service to handle 'win' type without vehicle_id lookup if possible, 
-          // or create a dummy "Win Vehicle" in DB.
-          // For safety in this prompt, let's assume saveScanLog handles it or we alert error.
           setMessage({ type: 'error', text: 'บันทึกไม่สำเร็จ (ตรวจสอบข้อมูล)' });
       }
   }
@@ -173,8 +188,8 @@ export const Scanner: React.FC = () => {
                 <div className="absolute top-0 right-0 w-4 h-4 border-t-4 border-r-4 border-teal-400 -mt-1 -mr-1"></div>
                 <div className="absolute bottom-0 left-0 w-4 h-4 border-b-4 border-l-4 border-teal-400 -mb-1 -ml-1"></div>
                 <div className="absolute bottom-0 right-0 w-4 h-4 border-b-4 border-r-4 border-teal-400 -mb-1 -mr-1"></div>
-                <div className="absolute -bottom-8 w-full text-center">
-                    <span className="text-teal-200 text-xs bg-black/60 px-3 py-1 rounded-full backdrop-blur-md">
+                <div className="absolute -bottom-10 w-full text-center">
+                    <span className="text-teal-200 text-xs bg-black/60 px-3 py-1 rounded-full backdrop-blur-md border border-white/10">
                         {scanning ? 'AI กำลังวิเคราะห์...' : 'จัดป้ายทะเบียนให้อยู่ในกรอบ'}
                     </span>
                 </div>
@@ -225,7 +240,7 @@ export const Scanner: React.FC = () => {
             message.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-blue-50 text-blue-700'
         }`}>
             {message.type === 'success' ? <CheckCircle size={20}/> : <AlertTriangle size={20}/>}
-            <span className="font-medium">{message.text}</span>
+            <span className="font-medium text-sm">{message.text}</span>
         </div>
       )}
 
